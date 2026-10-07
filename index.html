@@ -26,6 +26,56 @@
     .swatch span { width: 22px; height: 22px; flex-shrink: 0; border-radius: 6px; background: var(--swatch); border: 1px solid #0002; }
     .swatch[aria-pressed="true"] { border-color: #557b68; box-shadow: inset 0 0 0 1px #557b68; }
     .swatch:disabled { opacity: .45; cursor: default; }
+    #floating-colour { display: none; }
+    @media (max-width: 768px) {
+      #sidebar {
+        top: max(12px, env(safe-area-inset-top));
+        left: max(12px, env(safe-area-inset-left));
+        bottom: auto;
+        width: min(76vw, 280px);
+        max-height: calc(100dvh - 24px);
+        padding: 16px;
+        border-radius: 18px;
+      }
+      #sidebar h2 { margin-top: 22px; }
+      #sidebar .row { min-height: 56px; }
+      #sidebar .colour-section, #sidebar .hint { display: none; }
+      #sidebar .status { margin-top: 12px; padding-top: 0; }
+      #backdrop { background: #17231d12; }
+      #floating-colour {
+        display: block;
+        position: fixed;
+        z-index: 22;
+        left: 50%;
+        bottom: max(16px, env(safe-area-inset-bottom));
+        width: min(calc(100vw - 24px), 300px);
+        padding: 10px;
+        border: 1px solid #dce0dc;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, .96);
+        box-shadow: 0 6px 24px #24392a18;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transform: translate(-50%, 8px);
+        transition: opacity .18s ease, transform .18s ease, visibility 0s linear .18s;
+      }
+      #floating-colour.is-visible {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transform: translate(-50%, 0);
+        transition-delay: 0s;
+      }
+      .palette-label { margin: 0 0 6px 4px; font-size: 10px; letter-spacing: 1.4px; color: #7d857e; }
+      #floating-colour #colour-options { display: flex; gap: 4px; overflow-x: auto; }
+      #floating-colour .swatch { flex: 1 0 44px; min-width: 44px; min-height: 44px; padding: 6px; justify-content: center; font-size: 0; border-color: transparent; background: transparent; }
+      #floating-colour .swatch span { width: 28px; height: 28px; border-radius: 8px; }
+      #floating-colour .swatch[aria-pressed="true"] { border-color: #777b74; box-shadow: inset 0 0 0 1px #777b74; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #floating-colour { transition: none; }
+    }
   </style>
   <script type="importmap">
   {
@@ -60,11 +110,16 @@
     <button type="button" class="swatch" data-colour="#202020" style="--swatch:#202020" aria-pressed="false"><span aria-hidden="true"></span>Black</button>
   </fieldset>
 </details>
+<!-- A single set of swatches moves here on mobile; selection/material logic is shared. -->
 <div class="status" role="status" aria-live="polite"><div class="label">Scene</div><div id="scene-name">Upper Cabinets</div><div id="status">Loading...</div></div><div class="hint">Drag to rotate &middot; Scroll / pinch to zoom<br>Right drag / two fingers to pan &middot; Tap a door to select</div></aside>
+<div id="floating-colour" role="group" aria-label="Selected door colour" aria-hidden="true" inert>
+  <div class="palette-label">COLOUR</div>
+  <div id="floating-colour-slot"></div>
+</div>
 <script>
 const mobile=matchMedia('(max-width: 768px)');
 const panel=document.getElementById('sidebar'),menu=document.getElementById('menu'),close=document.getElementById('close');
-function setOpen(open,focus=false){document.body.classList.toggle('open',open);panel.inert=!open;menu.setAttribute('aria-expanded',String(open));if(focus)(open?close:menu).focus()}
+function setOpen(open,focus=false){document.body.classList.toggle('open',open);panel.inert=!open;menu.setAttribute('aria-expanded',String(open));if(focus)(open?close:menu).focus();document.dispatchEvent(new Event('scene-menu-change'))}
 setOpen(!mobile.matches);menu.onclick=()=>setOpen(true,true);close.onclick=()=>setOpen(false,true);document.getElementById('backdrop').onclick=()=>setOpen(false,true);mobile.addEventListener('change',()=>setOpen(!mobile.matches));
 document.addEventListener('keydown',event=>{
   if(!document.body.classList.contains('open'))return;
@@ -287,6 +342,28 @@ let currentModel = null;
 let selectedDoor = null;
 const colourOptions = document.getElementById('colour-options');
 const swatches = [...colourOptions.querySelectorAll('[data-colour]')];
+const editMobile = window.matchMedia('(max-width: 768px)');
+const floatingColour = document.getElementById('floating-colour');
+const desktopColourSection = document.querySelector('.colour-section');
+const floatingColourSlot = document.getElementById('floating-colour-slot');
+swatches.forEach(swatch => {
+  const label = swatch.textContent.trim();
+  swatch.setAttribute('aria-label', label);
+  swatch.title = label;
+});
+
+function syncColourPresentation() {
+  const container = editMobile.matches ? floatingColourSlot : desktopColourSection;
+  if (colourOptions.parentElement !== container) container.appendChild(colourOptions);
+  const visible = editMobile.matches && !!selectedDoor && !document.body.classList.contains('open');
+  floatingColour.classList.toggle('is-visible', visible);
+  floatingColour.setAttribute('aria-hidden', String(!visible));
+  // Disable interaction immediately while CSS finishes the short fade-out.
+  floatingColour.inert = !visible;
+}
+editMobile.addEventListener('change', syncColourPresentation);
+document.addEventListener('scene-menu-change', syncColourPresentation);
+syncColourPresentation();
 
 function isSelectableDoor(object) {
   return object?.isMesh && /^UC_0[1-7]_Door$/.test(object.name);
@@ -310,6 +387,7 @@ function updateSelectionUI() {
     const colour = new THREE.Color(swatch.dataset.colour);
     swatch.setAttribute('aria-pressed', String(materials.length > 0 && materials.every(material => material.color?.equals(colour))));
   }
+  syncColourPresentation();
 }
 function selectDoor(door) {
   if (selectedDoor === door) return;
@@ -325,8 +403,8 @@ function selectDoor(door) {
     const edge = selectedDoor.userData.selectionEdge;
     if (edge) {
       selectedDoor.userData.edgeBeforeSelection = { color: edge.material.color.clone(), opacity: edge.material.opacity };
-      edge.material.color.set(0x557b68);
-      edge.material.opacity = 0.55;
+      // Emphasise the existing neutral edges without an editor-style coloured outline.
+      edge.material.opacity = 0.65;
     }
   }
   updateSelectionUI();
